@@ -1,0 +1,110 @@
+# PREPA YUCATÁN — TALLERES
+#   docker compose up -d --build
+# Web:      http://localhost:3000
+# Panel:    http://localhost:3000/admin
+# Correos:  http://localhost:8025 (Mailpit, solo desarrollo)
+name: prepa-talleres
+
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://${POSTGRES_USER:-talleres}:${POSTGRES_PASSWORD:-talleres_local_pw}@postgres:5432/${POSTGRES_DB:-talleres}
+  DB_POOL_MAX: ${DB_POOL_MAX:-20}
+  REDIS_URL: redis://:${REDIS_PASSWORD:-talleres_local_redis}@redis:6379/0
+  AUTH_SECRET: ${AUTH_SECRET:-}
+  APP_URL: ${APP_URL:-http://localhost:3000}
+  TRUST_PROXY: ${TRUST_PROXY:-false}
+  ALLOWED_EMAIL_DOMAIN: ${ALLOWED_EMAIL_DOMAIN:-prepayucatan.com}
+  ADMIN_NOTIFICATION_EMAILS: ${ADMIN_NOTIFICATION_EMAILS:-dragonhackprime@gmail.com,gretty.escalante@prepayucatan.com}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  EMAIL_FROM: ${EMAIL_FROM:-Talleres Prepa Yucatán <no-reply@prepayucatan.com>}
+  OTP_EXPIRATION_MINUTES: ${OTP_EXPIRATION_MINUTES:-10}
+  RESERVATION_TIMEOUT_MINUTES: ${RESERVATION_TIMEOUT_MINUTES:-5}
+  SESSION_TIMEOUT_MINUTES: ${SESSION_TIMEOUT_MINUTES:-10}
+  REGISTRATION_POLICY: ${REGISTRATION_POLICY:-ONE_PER_EVENT}
+  TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+  SCHOOL_NAME: ${SCHOOL_NAME:-PREPA YUCATÁN}
+  LOGO_URL: ${LOGO_URL:-/brand/logo.svg}
+  TZ: America/Merida
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-talleres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-talleres_local_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-talleres}
+      TZ: UTC
+      PGTZ: UTC
+    command: ["postgres", "-c", "timezone=UTC", "-c", "max_connections=200"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Sin puertos publicados: solo accesible dentro de la red de Docker.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-talleres_local_redis}"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-talleres_local_redis}\" --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-talleres_local_redis}
+
+  mailpit:
+    # Buzón de pruebas para desarrollo local. En producción configura SMTP real
+    # y elimina este servicio (o usa: docker compose up -d web worker postgres redis).
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  web:
+    build: .
+    image: prepa-talleres:latest
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "true"
+      RUN_SEED: ${RUN_SEED:-true}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@prepayucatan.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - appdata:/app/data
+
+  worker:
+    image: prepa-talleres:latest
+    restart: unless-stopped
+    command: ["worker"]
+    depends_on:
+      web: { condition: service_healthy }
+    environment:
+      <<: *app-env
+    volumes:
+      - appdata:/app/data
+    healthcheck:
+      disable: true
+
+volumes:
+  pgdata:
+  redisdata:
+  appdata:

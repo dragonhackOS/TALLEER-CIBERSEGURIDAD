@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Logo institucional (reemplazable)">
+  <rect width="64" height="64" rx="14" fill="#1d3fd8"/>
+  <path d="M32 12 12 22l20 10 20-10-20-10Z" fill="#fff"/>
+  <path d="M20 28v10c0 4 5.4 8 12 8s12-4 12-8V28l-12 6-12-6Z" fill="#bfd5fe"/>
+  <path d="M50 23v14" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+</svg>
