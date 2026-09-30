@@ -1,0 +1,369 @@
+// PREPA YUCATÁN — TALLERES
+// Modelo de datos. PostgreSQL es la fuente definitiva de verdad para cupos.
+// Restricciones adicionales (CHECK, índices parciales, triggers de auditoría)
+// viven en la migración SQL: prisma/migrations/*/migration.sql
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkshopStatus {
+  DRAFT
+  OPEN
+  FULL
+  CLOSED
+  CANCELLED
+  FINISHED
+}
+
+enum WorkshopLevel {
+  PRINCIPIANTE
+  INTERMEDIO
+  AVANZADO
+}
+
+enum RegistrationStatus {
+  REGISTERED
+  CHECKED_IN
+  NO_SHOW
+  CANCELLED
+  WAITLISTED
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONVERTED
+  EXPIRED
+  RELEASED
+}
+
+enum WaitlistStatus {
+  WAITING
+  PROMOTED
+  CANCELLED
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  INSTRUCTOR
+  CHECKIN_STAFF
+  VIEWER
+}
+
+enum EmailStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
+enum CheckinMethod {
+  QR
+  MANUAL
+  CODE
+}
+
+enum ActorType {
+  ADMIN
+  STUDENT
+  SYSTEM
+}
+
+model Student {
+  id                   String   @id @default(uuid()) @db.Uuid
+  email                String   @unique @db.VarChar(254)
+  fullName             String?  @map("full_name") @db.VarChar(120)
+  classroom            String?  @db.VarChar(20)
+  semester             Int?
+  phone                String?  @db.VarChar(20)
+  programmingExperience String? @map("programming_experience") @db.VarChar(40)
+  securityExperience   String?  @map("security_experience") @db.VarChar(40)
+  ctfBefore            Boolean? @map("ctf_before")
+  privacyAcceptedAt    DateTime? @map("privacy_accepted_at")
+  emailVerifiedAt      DateTime? @map("email_verified_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  registrations Registration[]
+  reservations  Reservation[]
+  waitlist      WaitlistEntry[]
+  sessions      StudentSession[]
+
+  @@index([createdAt])
+  @@map("students")
+}
+
+model StudentSession {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  studentId  String    @map("student_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([expiresAt])
+  @@map("student_sessions")
+}
+
+model Workshop {
+  id                  String         @id @default(uuid()) @db.Uuid
+  slug                String         @unique @db.VarChar(80)
+  name                String         @db.VarChar(120)
+  description         String         @db.Text
+  instructorName      String         @map("instructor_name") @db.VarChar(120)
+  instructorAdminId   String?        @map("instructor_admin_id") @db.Uuid
+  date                DateTime       @db.Date
+  startTime           String         @map("start_time") @db.VarChar(5)
+  endTime             String         @map("end_time") @db.VarChar(5)
+  location            String         @db.VarChar(120)
+  level               WorkshopLevel
+  maxCapacity         Int            @map("max_capacity")
+  registeredCount     Int            @default(0) @map("registered_count")
+  imageUrl            String?        @map("image_url") @db.VarChar(500)
+  icon                String?        @db.VarChar(40)
+  codePrefix          String         @default("TLR") @map("code_prefix") @db.VarChar(6)
+  eventKey            String         @default("default") @map("event_key") @db.VarChar(60)
+  status              WorkshopStatus @default(DRAFT)
+  registrationOpensAt DateTime?      @map("registration_opens_at")
+  registrationClosesAt DateTime?     @map("registration_closes_at")
+  archivedAt          DateTime?      @map("archived_at")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  instructorAdmin        Admin?                 @relation("InstructorWorkshops", fields: [instructorAdminId], references: [id], onDelete: SetNull)
+  registrations          Registration[]
+  reservations           Reservation[]
+  waitlist               WaitlistEntry[]
+  capacityNotifications  CapacityNotification[]
+
+  @@index([status])
+  @@index([eventKey])
+  @@index([createdAt])
+  @@map("workshops")
+}
+
+model Reservation {
+  id         String            @id @default(uuid()) @db.Uuid
+  studentId  String            @map("student_id") @db.Uuid
+  workshopId String            @map("workshop_id") @db.Uuid
+  status     ReservationStatus @default(ACTIVE)
+  expiresAt  DateTime          @map("expires_at")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+
+  @@index([workshopId, status, expiresAt])
+  @@index([studentId])
+  @@index([status])
+  @@map("reservations")
+}
+
+model Registration {
+  id               String             @id @default(uuid()) @db.Uuid
+  publicId         String             @unique @map("public_id") @db.VarChar(40)
+  registrationCode String             @unique @map("registration_code") @db.VarChar(20)
+  studentId        String             @map("student_id") @db.Uuid
+  workshopId       String             @map("workshop_id") @db.Uuid
+  eventKey         String             @map("event_key") @db.VarChar(60)
+  status           RegistrationStatus @default(REGISTERED)
+  qrVersion        Int                @default(1) @map("qr_version")
+  source           String             @default("WEB") @db.VarChar(20)
+  cancelledAt      DateTime?          @map("cancelled_at")
+  cancelReason     String?            @map("cancel_reason") @db.VarChar(200)
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  student    Student     @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  workshop   Workshop    @relation(fields: [workshopId], references: [id], onDelete: Restrict)
+  attendance Attendance?
+
+  // Unicidad de inscripciones ACTIVAS: índices parciales en la migración SQL
+  //   uq_registration_active_student_workshop (student_id, workshop_id)
+  @@index([studentId])
+  @@index([workshopId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([eventKey])
+  @@map("registrations")
+}
+
+model WaitlistEntry {
+  id                    String         @id @default(uuid()) @db.Uuid
+  studentId             String         @map("student_id") @db.Uuid
+  workshopId            String         @map("workshop_id") @db.Uuid
+  position              Int
+  status                WaitlistStatus @default(WAITING)
+  promotedRegistrationId String?       @map("promoted_registration_id") @db.Uuid
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+
+  student  Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+
+  @@index([workshopId, status, position])
+  @@index([studentId])
+  @@map("waitlist_entries")
+}
+
+model Attendance {
+  id              String        @id @default(uuid()) @db.Uuid
+  registrationId  String        @unique @map("registration_id") @db.Uuid
+  checkedInAt     DateTime      @default(now()) @map("checked_in_at")
+  checkedInById   String?       @map("checked_in_by_id") @db.Uuid
+  method          CheckinMethod
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  checkedInBy  Admin?       @relation(fields: [checkedInById], references: [id], onDelete: SetNull)
+
+  @@index([checkedInAt])
+  @@map("attendances")
+}
+
+model EmailVerification {
+  id          String    @id @default(uuid()) @db.Uuid
+  email       String    @db.VarChar(254)
+  codeHash    String    @map("code_hash") @db.VarChar(64)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  expiresAt   DateTime  @map("expires_at")
+  consumedAt  DateTime? @map("consumed_at")
+  ipHash      String?   @map("ip_hash") @db.VarChar(64)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([email, createdAt])
+  @@index([expiresAt])
+  @@map("email_verifications")
+}
+
+model Admin {
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique @db.VarChar(254)
+  name            String    @db.VarChar(120)
+  passwordHash    String    @map("password_hash") @db.VarChar(255)
+  role            AdminRole @default(VIEWER)
+  totpSecret      String?   @map("totp_secret") @db.VarChar(255)
+  totpEnabled     Boolean   @default(false) @map("totp_enabled")
+  active          Boolean   @default(true)
+  failedLogins    Int       @default(0) @map("failed_logins")
+  lockedUntil     DateTime? @map("locked_until")
+  lastLoginAt     DateTime? @map("last_login_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  sessions            AdminSession[]
+  auditLogs           AuditLog[]
+  instructedWorkshops Workshop[]     @relation("InstructorWorkshops")
+  checkins            Attendance[]
+
+  @@index([role])
+  @@map("admins")
+}
+
+model AdminSession {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  adminId    String    @map("admin_id") @db.Uuid
+  ipHash     String?   @map("ip_hash") @db.VarChar(64)
+  userAgent  String?   @map("user_agent") @db.VarChar(255)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@map("admin_sessions")
+}
+
+model AuditLog {
+  id           String    @id @default(uuid()) @db.Uuid
+  adminId      String?   @map("admin_id") @db.Uuid
+  actorType    ActorType @default(ADMIN) @map("actor_type")
+  action       String    @db.VarChar(60)
+  resourceType String?   @map("resource_type") @db.VarChar(40)
+  resourceId   String?   @map("resource_id") @db.VarChar(80)
+  metadata     Json?
+  ipHash       String?   @map("ip_hash") @db.VarChar(64)
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  admin Admin? @relation(fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([action])
+  @@index([resourceType, resourceId])
+  @@index([adminId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  key            String   @db.VarChar(80)
+  scope          String   @db.VarChar(80)
+  requestHash    String   @map("request_hash") @db.VarChar(64)
+  state          String   @default("IN_PROGRESS") @db.VarChar(20)
+  responseStatus Int?     @map("response_status")
+  responseBody   Json?    @map("response_body")
+  createdAt      DateTime @default(now()) @map("created_at")
+  expiresAt      DateTime @map("expires_at")
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+model CapacityNotification {
+  id                  String   @id @default(uuid()) @db.Uuid
+  workshopId          String   @map("workshop_id") @db.Uuid
+  kind                String   @db.VarChar(20) // PCT_80 | PCT_90 | FULL | LAST_SEAT
+  capacitySnapshot    Int      @map("capacity_snapshot")
+  registeredSnapshot  Int      @map("registered_snapshot")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+
+  @@unique([workshopId, kind, capacitySnapshot], map: "capacity_notification_events_workshop_id_kind_capacity_snap_key")
+  @@map("capacity_notification_events")
+}
+
+model EmailLog {
+  id          String      @id @default(uuid()) @db.Uuid
+  toAddresses String[]    @map("to_addresses")
+  subject     String      @db.VarChar(250)
+  template    String      @db.VarChar(60)
+  payload     Json?
+  status      EmailStatus @default(PENDING)
+  attempts    Int         @default(0)
+  lastError   String?     @map("last_error") @db.VarChar(500)
+  relatedType String?     @map("related_type") @db.VarChar(40)
+  relatedId   String?     @map("related_id") @db.VarChar(80)
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at")
+  sentAt      DateTime?   @map("sent_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([createdAt])
+  @@map("email_logs")
+}
+
+model Setting {
+  key       String   @id @db.VarChar(60)
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
